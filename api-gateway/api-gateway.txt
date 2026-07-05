@@ -1,0 +1,22 @@
+**It's working!** 🎉
+
+`StatusCode: 200` — the gateway is successfully routing `/patients` to your patient service.
+
+To summarize what the fix was:
+
+- **Spring Boot 4.1 + Spring Cloud 2025.x** with `spring-cloud-starter-gateway-server-webflux` requires the new config namespace:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: patient
+              uri: http://patient-service:4000
+              predicates:
+                - Path=/**
+```
+
+The old `spring.cloud.gateway.routes` namespace silently ignored routes with this newer starter. Keep this in mind for all your other services as you add more routes to the gateway.

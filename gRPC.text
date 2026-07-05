@@ -1,0 +1,491 @@
+Since you're building Spring Boot microservices, understanding gRPC will help a lot. Let's go from basics to how it fits into your Patient Management project.
+
+# What is gRPC?
+
+**gRPC (Google Remote Procedure Call)** is a framework that allows one application to call methods in another application as if they were local methods.
+
+
+
+The networking details are hidden by gRPC.
+
+---
+
+# REST vs gRPC
+
+### REST
+
+Patient Service sends:
+
+```http
+POST /billing/createAccount
+Content-Type: application/json
+
+{
+  "patientId":"123",
+  "name":"Hemendra"
+}
+```
+
+Billing Service returns:
+
+```json
+{
+  "accountId":"456",
+  "status":"ACTIVE"
+}
+```
+
+---
+
+### gRPC
+
+Patient Service sends:
+
+```protobuf
+BillingRequest
+```
+
+Billing Service returns:
+
+```protobuf
+BillingResponse
+```
+
+over HTTP/2 using Protocol Buffers.
+
+No JSON serialization is involved.
+
+---
+
+# Why use gRPC?
+
+### Faster
+
+JSON:
+
+```json
+{
+  "patientId":"123",
+  "name":"Hemendra"
+}
+```
+
+contains field names repeatedly.
+
+Protocol Buffers store data in compact binary format.
+
+Result:
+
+* smaller payloads
+* less bandwidth
+* lower latency
+
+---
+
+### Strongly Typed
+
+With REST:
+
+```json
+{
+  "patientId":"123"
+}
+```
+
+might have missing fields.
+
+With gRPC:
+
+```proto
+message BillingRequest {
+    string patientId = 1;
+    string name = 2;
+}
+```
+
+the structure is predefined.
+
+---
+
+### Automatic Code Generation
+
+You write:
+
+```proto
+service BillingService {
+  rpc CreateBillingAccount(BillingRequest)
+      returns (BillingResponse);
+}
+```
+
+gRPC generates:
+
+```java
+BillingServiceGrpc.java
+BillingRequest.java
+BillingResponse.java
+```
+
+automatically.
+
+---
+
+# Core Components
+
+## 1. Proto File
+
+This is the contract.
+
+Example:
+
+```proto
+syntax = "proto3";
+
+package billing;
+
+service BillingService {
+
+  rpc CreateBillingAccount(
+      BillingRequest
+  ) returns (
+      BillingResponse
+  );
+
+}
+
+message BillingRequest {
+  string patientId = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message BillingResponse {
+  string accountId = 1;
+  string status = 2;
+}
+```
+
+Think of this like an interface definition.
+
+---
+
+## 2. Server
+
+Billing Service implements the contract.
+
+```java
+@GrpcService
+public class BillingGrpcService
+    extends BillingServiceGrpc.BillingServiceImplBase {
+
+    @Override
+    public void createBillingAccount(
+            BillingRequest request,
+            StreamObserver<BillingResponse> responseObserver) {
+
+        BillingResponse response =
+                BillingResponse.newBuilder()
+                        .setAccountId("123")
+                        .setStatus("ACTIVE")
+                        .build();
+
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+}
+```
+
+---
+
+## 3. Client
+
+Patient Service calls the server.
+
+```java
+ManagedChannel channel =
+        ManagedChannelBuilder
+                .forAddress("billing-service",9090)
+                .usePlaintext()
+                .build();
+
+BillingServiceGrpc.BillingServiceBlockingStub stub =
+        BillingServiceGrpc.newBlockingStub(channel);
+
+BillingResponse response =
+        stub.createBillingAccount(request);
+```
+
+---
+
+# What is a Stub?
+
+A stub is a client-side proxy.
+
+You write:
+
+```java
+stub.createBillingAccount(request);
+```
+
+and gRPC internally:
+
+1. Serializes request
+2. Sends over network
+3. Receives response
+4. Deserializes response
+
+You don't write socket code.
+
+---
+
+# What is ManagedChannel?
+
+Think of it as a connection to the remote server.
+
+```java
+ManagedChannel channel =
+    ManagedChannelBuilder
+        .forAddress("billing-service",9090)
+        .usePlaintext()
+        .build();
+```
+
+Similar to:
+
+```java
+Connection connection = DriverManager.getConnection(...)
+```
+
+for databases.
+
+---
+
+# What is StreamObserver?
+
+Used for sending responses.
+
+```java
+responseObserver.onNext(response);
+responseObserver.onCompleted();
+```
+
+### onNext()
+
+Send data.
+
+### onCompleted()
+
+Tell client we're done.
+
+### onError()
+
+Send error.
+
+Example:
+
+```java
+responseObserver.onError(
+    Status.NOT_FOUND.asRuntimeException()
+);
+```
+
+---
+
+# Types of gRPC Calls
+
+## Unary
+
+One request → One response
+
+Most common.
+
+```proto
+rpc CreateBillingAccount(
+    BillingRequest
+) returns (
+    BillingResponse
+);
+```
+
+Like:
+
+```java
+response = stub.createBillingAccount(request);
+```
+
+---
+
+## Server Streaming
+
+One request → Many responses
+
+```proto
+rpc GetTransactions(AccountRequest)
+    returns (stream Transaction);
+```
+
+Client:
+
+```java
+Request ---> Server
+```
+
+Server:
+
+```java
+Transaction1
+Transaction2
+Transaction3
+Transaction4
+```
+
+---
+
+## Client Streaming
+
+Many requests → One response
+
+```proto
+rpc UploadTransactions(
+    stream Transaction
+) returns (
+    UploadResult
+);
+```
+
+---
+
+## Bidirectional Streaming
+
+Many requests ↔ Many responses
+
+```proto
+rpc Chat(
+    stream Message
+) returns (
+    stream Message
+);
+```
+
+Useful for:
+
+* chat apps
+* real-time trading
+* gaming
+
+---
+
+# How It Fits Your Project
+
+Current flow:
+
+```text
+Client
+   |
+   v
+Patient Service
+   |
+   | gRPC
+   v
+Billing Service
+```
+
+### Step 1
+
+REST request arrives:
+
+```http
+POST /patients
+```
+
+### Step 2
+
+Patient saved in DB.
+
+### Step 3
+
+Patient Service creates:
+
+```java
+BillingRequest
+```
+
+### Step 4
+
+Calls:
+
+```java
+stub.createBillingAccount(request);
+```
+
+### Step 5
+
+Billing Service receives request.
+
+### Step 6
+
+Billing Service returns:
+
+```java
+BillingResponse
+```
+
+### Step 7
+
+Patient Service receives response.
+
+---
+
+# Why Microservices Use gRPC
+
+REST is excellent for:
+
+* Web browsers
+* Public APIs
+* Third-party integrations
+
+gRPC is excellent for:
+
+* Service-to-service communication
+* Internal microservices
+* High-performance systems
+
+That's why companies like Google, Netflix, and many cloud-native systems use gRPC internally.
+
+# Interview Questions
+
+### What is gRPC?
+
+A high-performance RPC framework developed by Google that uses HTTP/2 and Protocol Buffers for communication between distributed services.
+
+---
+
+### Why is gRPC faster than REST?
+
+* Binary Protocol Buffers instead of JSON
+* HTTP/2 multiplexing
+* Smaller payloads
+* Less serialization overhead
+
+---
+
+### What is a Stub?
+
+A client-side proxy generated from a `.proto` file that allows calling remote methods as if they were local methods.
+
+---
+
+### What is a ManagedChannel?
+
+A connection between a gRPC client and server used to send requests and receive responses.
+
+---
+
+### What are the four types of gRPC calls?
+
+1. Unary
+2. Server Streaming
+3. Client Streaming
+4. Bidirectional Streaming
+
+Since you're learning Java backend development, the next useful topic would be understanding **Protocol Buffers (`.proto` files) in depth**, because that's the foundation of everything gRPC generates.
